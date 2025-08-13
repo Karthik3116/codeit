@@ -1,9 +1,10 @@
+
+
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
 import toast from 'react-hot-toast';
 import API from '../api';
-
 import CodeEditor from '../components/CodeEditor';
 import Leaderboard from '../components/Leaderboard';
 import CountdownTimer from '../components/CountdownTimer';
@@ -22,10 +23,16 @@ const ContestRoom = () => {
     const [isRunning, setIsRunning] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false);
     const socket = useRef(null);
-    
+
     const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 
-    // This effect handles data fetching
+    const updateEditorCode = (qIndex, lang) => {
+        if (questions.length > 0 && questions[qIndex]) {
+            const starter = questions[qIndex].starterCode.find(sc => sc.language === lang);
+            setCode(starter ? starter.code : `// No starter code for ${lang}`);
+        }
+    };
+
     useEffect(() => {
         const fetchContestData = async () => {
             try {
@@ -46,41 +53,25 @@ const ContestRoom = () => {
         fetchContestData();
     }, [roomId, navigate]);
 
-
-    // FIX: This refactored useEffect hook properly manages the socket connection and listeners
     useEffect(() => {
-        // Establish connection
         socket.current = io(SOCKET_URL);
-        
-        // Join the specific contest room
         socket.current.emit('joinRoom', roomId);
 
-        // Define the event handler
         const handleLeaderboardUpdate = (newLeaderboard) => {
             setLeaderboard(newLeaderboard);
             toast.success('Leaderboard updated!');
         };
         
-        // Attach the listener
         socket.current.on('leaderboard:update', handleLeaderboardUpdate);
 
-        // Cleanup function to run when the component unmounts
         return () => {
             if (socket.current) {
-                // Detach the specific listener and disconnect
                 socket.current.off('leaderboard:update', handleLeaderboardUpdate);
                 socket.current.disconnect();
             }
         };
-    }, [roomId, SOCKET_URL]); // Dependencies ensure this runs only when the room changes
+    }, [roomId, SOCKET_URL]);
 
-    const updateEditorCode = (qIndex, lang) => {
-        if (questions.length > 0) {
-            const starter = questions[qIndex].starterCode.find(sc => sc.language === lang);
-            setCode(starter ? starter.code : `// No starter code for ${lang}`);
-        }
-    };
-    
     const handleLanguageChange = (e) => {
         const newLang = e.target.value;
         setLanguage(newLang);
@@ -91,7 +82,7 @@ const ContestRoom = () => {
         setCurrentQuestionIndex(index);
         updateEditorCode(index, language);
     };
-    
+
     const handleRunCode = async () => {
         setIsRunning(true);
         setOutput('');
@@ -104,10 +95,10 @@ const ContestRoom = () => {
                 problemId: currentProblem._id,
                 contestId: contest._id
             });
-            if(data.type === 'error'){
+            if (data.type === 'error') {
                 setOutput(`Error:\n${data.message}`);
             } else {
-                 setOutput(`Output:\n${data.output}`);
+                setOutput(`Output:\n${data.output}`);
             }
         } catch (error) {
             setOutput(`Error:\n${error.response?.data?.message || 'Execution failed'}`);
@@ -115,7 +106,7 @@ const ContestRoom = () => {
             setIsRunning(false);
         }
     };
-    
+
     const handleSubmitCode = async () => {
         setIsSubmitting(true);
         setOutput('');
@@ -138,14 +129,13 @@ const ContestRoom = () => {
                 toast.error(`Submission failed. Passed ${testCasesPassed}/${totalTestCases} test cases.`);
             }
             setOutput(`Result: ${success ? 'Accepted' : 'Partial/Wrong Answer'}\nScore for this submission: ${score}\nPassed: ${testCasesPassed}/${totalTestCases}`);
-
         } catch (error) {
-             toast.dismiss(toastId);
-             toast.error(error.response?.data?.message || 'Submission failed');
+            toast.dismiss(toastId);
+            toast.error(error.response?.data?.message || 'Submission failed');
         } finally {
             setIsSubmitting(false);
         }
-    }
+    };
 
     if (!contest || questions.length === 0) {
         return <div className="text-center mt-20">Loading contest...</div>;
@@ -154,58 +144,64 @@ const ContestRoom = () => {
     const currentProblem = questions[currentQuestionIndex];
 
     return (
-        <div className="h-[calc(100vh-120px)] grid grid-cols-12 gap-4">
-            <div className="col-span-3 bg-gray-800 p-4 rounded-lg overflow-y-auto">
-                <h2 className="text-xl font-bold text-teal-400 mb-4">Problems</h2>
-                {questions.map((q, index) => (
-                    <div 
-                        key={q._id} 
-                        onClick={() => handleQuestionChange(index)}
-                        className={`p-3 rounded-md cursor-pointer mb-2 transition ${
-                            index === currentQuestionIndex ? 'bg-teal-500 text-white' : 'bg-gray-700 hover:bg-gray-600'
-                        }`}
-                    >
-                        <h3 className="font-semibold">{index + 1}. {q.title}</h3>
+        <div className="flex gap-4 h-[calc(100vh-100px)]">
+            <div className="flex flex-col w-1/2 gap-4">
+                <div className="bg-gray-800 rounded-lg p-1 flex-shrink-0">
+                    {questions.map((q, index) => (
+                        <button
+                            key={q._id}
+                            onClick={() => handleQuestionChange(index)}
+                            className={`px-3 py-2 text-sm font-medium rounded-md ${
+                                index === currentQuestionIndex ? 'bg-gray-700 text-white' : 'text-gray-400 hover:bg-gray-700/50'
+                            }`}
+                        >
+                           {index + 1}. {q.title}
+                        </button>
+                    ))}
+                </div>
+                <div className="bg-gray-800 rounded-lg p-6 flex-grow overflow-y-auto">
+                    <h2 className="text-2xl font-bold text-white mb-4">{currentProblem.title}</h2>
+                    <div className="prose prose-invert max-w-none text-gray-300" dangerouslySetInnerHTML={{ __html: currentProblem.description.replace(/\n/g, '<br/>') }} />
+                </div>
+                <div className="h-1/3 flex-shrink-0">
+                    <Leaderboard leaderboard={leaderboard} />
+                </div>
+            </div>
+
+            <div className="flex flex-col w-1/2 gap-4">
+                <div className="flex-grow flex flex-col bg-gray-800 rounded-lg">
+                    <div className="flex justify-between items-center p-2 border-b border-gray-700 flex-shrink-0">
+                        <select
+                            value={language}
+                            onChange={handleLanguageChange}
+                            className="bg-gray-700 text-white rounded px-3 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-teal-500"
+                        >
+                            <option value="javascript">JavaScript</option>
+                            <option value="python">Python</option>
+                            <option value="java">Java</option>
+                        </select>
+                        {contest.endTime && <CountdownTimer endTime={contest.endTime} />}
                     </div>
-                ))}
-            </div>
-
-            <div className="col-span-6 flex flex-col gap-4">
-                <div className="bg-gray-800 p-4 rounded-lg flex-shrink-0">
-                    <h2 className="text-2xl font-bold text-white mb-2">{currentProblem.title}</h2>
-                    <p className="text-gray-300 whitespace-pre-wrap">{currentProblem.description}</p>
+                    <div className="flex-grow">
+                         <CodeEditor code={code} setCode={setCode} language={language} />
+                    </div>
                 </div>
-                 <div className="bg-gray-800 p-2 rounded-lg flex-shrink-0">
-                    <label htmlFor="language-select" className="text-sm font-medium text-gray-300 mr-2">Language:</label>
-                    <select 
-                        id="language-select" 
-                        value={language} 
-                        onChange={handleLanguageChange}
-                        className="bg-gray-700 text-white rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-teal-500"
-                    >
-                        <option value="javascript">JavaScript</option>
-                        <option value="python">Python</option>
-                        <option value="java">Java</option>
-                    </select>
-                </div>
-                <div className="flex-grow">
-                    <CodeEditor code={code} setCode={setCode} language={language} />
-                </div>
-            </div>
-
-            <div className="col-span-3 flex flex-col gap-4">
-                {contest.endTime && <CountdownTimer endTime={contest.endTime} />}
-                <div className="flex-grow">
-                     <Leaderboard leaderboard={leaderboard} />
-                </div>
-                <div className="bg-gray-800 p-4 rounded-lg flex-shrink-0">
-                    <h3 className="text-lg font-bold mb-2">Output</h3>
-                    <pre className="bg-gray-900 text-white p-3 rounded-md h-32 overflow-y-auto text-sm">{output || 'Click "Run Code" to see output.'}</pre>
-                    <div className="flex gap-4 mt-4">
-                        <button onClick={handleRunCode} disabled={isRunning} className="flex-1 bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded flex items-center justify-center gap-2 disabled:opacity-50">
+                <div className="bg-gray-800 rounded-lg p-4 flex-shrink-0">
+                     <h3 className="text-lg font-semibold text-white mb-2">Output</h3>
+                     <pre className="bg-gray-900 text-white p-3 rounded-md h-32 overflow-y-auto text-sm font-mono">{output || 'Execution output will appear here.'}</pre>
+                     <div className="flex gap-4 mt-4 justify-end">
+                        <button
+                            onClick={handleRunCode}
+                            disabled={isRunning}
+                            className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-5 rounded-md flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
                             <FaPlay /> Run Code
                         </button>
-                        <button onClick={handleSubmitCode} disabled={isSubmitting} className="flex-1 bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-4 rounded flex items-center justify-center gap-2 disabled:opacity-50">
+                        <button
+                            onClick={handleSubmitCode}
+                            disabled={isSubmitting}
+                            className="bg-green-600 hover:bg-green-500 text-white font-bold py-2 px-5 rounded-md flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
                            <FaPaperPlane /> Submit
                         </button>
                     </div>

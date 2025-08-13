@@ -1,4 +1,169 @@
-// utils/sandbox.js
+// import { spawn } from 'child_process';
+// import fs from 'fs/promises';
+// import path from 'path';
+// import { fileURLToPath } from 'url';
+// import { nanoid } from 'nanoid';
+// import { parseInputToTypes, mapJsTypeToJava } from './codeGenUtils.js';
+
+// const __filename = fileURLToPath(import.meta.url);
+// const __dirname = path.dirname(__filename);
+// const tempDir = path.join(__dirname, 'temp');
+
+// fs.mkdir(tempDir, { recursive: true }).catch(console.error);
+
+// const executeCode = (language, code, input, problemTitle, allTestCases) => {
+//     switch (language) {
+//         case 'javascript':
+//             return executeJavaScript(code, input);
+//         case 'python':
+//             return executePython(code, input);
+//         case 'java':
+//             return executeJava(code, input, allTestCases);
+//         default:
+//             return Promise.reject({ type: 'error', message: `Language ${language} not supported.` });
+//     }
+// };
+
+// const executeJavaScript = (code, input) => {
+//     return new Promise(async (resolve, reject) => {
+//         const uniqueId = nanoid(8);
+//         const tempFileName = `script-${uniqueId}.js`;
+//         const tempFilePath = path.join(tempDir, tempFileName);
+//         const wrappedInput = `[${input}]`;
+//         const wrappedCode = `try { ${code} if (typeof solve !== 'function') { throw new Error("A 'solve' function was not found."); } const funcInput = JSON.parse(process.argv[2]); const result = Array.isArray(funcInput) ? solve(...funcInput) : solve(funcInput); const output = typeof result === 'string' ? JSON.stringify(result) : JSON.stringify(result); console.log(output); } catch (e) { console.error(e.name + ": " + e.message); }`;
+//         await fs.writeFile(tempFilePath, wrappedCode);
+//         const child = spawn('node', [tempFilePath, wrappedInput], { timeout: 5000 });
+//         handleChildProcess(child, tempFilePath, resolve, reject);
+//     });
+// };
+
+// const executePython = (code, input) => {
+//      return new Promise(async (resolve, reject) => {
+//         const uniqueId = nanoid(8);
+//         const tempFileName = `script-${uniqueId}.py`;
+//         const tempFilePath = path.join(tempDir, tempFileName);
+//         const wrappedInput = `[${input}]`;
+//         const wrappedCode = `import sys\nimport json\n\n${code}\n\ndef main():\n    try:\n        if 'solve' not in globals():\n            raise NameError("A 'solve' function was not found.")\n        func_input = json.loads(sys.argv[1])\n        if isinstance(func_input, list):\n            result = solve(*func_input)\n        else:\n            result = solve(func_input)\n        print(json.dumps(result))\n    except Exception as e:\n        print(str(e), file=sys.stderr)\n\nif __name__ == "__main__":\n    main()`;
+//         await fs.writeFile(tempFilePath, wrappedCode);
+//         const child = spawn('python', [tempFilePath, wrappedInput], { timeout: 5000 });
+//         handleChildProcess(child, tempFilePath, resolve, reject);
+//     });
+// };
+
+// const executeJava = (code, input, allTestCases) => {
+//     return new Promise(async (resolve, reject) => {
+//         // --- FIX: Create a unique directory for each execution for isolation ---
+//         const uniqueId = nanoid(8);
+//         const execDir = path.join(tempDir, uniqueId);
+//         await fs.mkdir(execDir, { recursive: true });
+
+//         const className = `Main`; // Standardize class name within its own folder
+//         const javaFile = `${className}.java`;
+//         const javaFilePath = path.join(execDir, javaFile);
+
+//         try {
+//             if (!allTestCases || allTestCases.length === 0) {
+//                 throw new Error('Cannot generate Java runner without test cases.');
+//             }
+            
+//             const firstTestCase = allTestCases[0];
+//             const inputTypes = parseInputToTypes(firstTestCase.input);
+//             const outputType = parseInputToTypes(firstTestCase.output);
+//             if (!inputTypes) {
+//                 throw new Error('Could not determine input types from the first test case.');
+//             }
+            
+//             let argParsingLogic = '';
+//             let argNames = [];
+//             let spawnArgs = JSON.parse(`[${input}]`);
+
+//             for (let i = 0; i < inputTypes.length; i++) {
+//                 const javaType = mapJsTypeToJava(inputTypes[i]);
+//                 const argName = `arg${i + 1}`;
+//                 argNames.push(argName);
+                
+//                 switch(javaType) {
+//                     case "int": argParsingLogic += `int ${argName}=Integer.parseInt(args[${i}]);`; break;
+//                     case "String":
+//                         argParsingLogic += `String ${argName}=args[${i}];`;
+//                         argParsingLogic += `if(${argName}.startsWith("\\"")&&${argName}.endsWith("\\""))${argName}=${argName}.substring(1,${argName}.length()-1);`;
+//                         break;
+//                     case "int[]":
+//                         argParsingLogic += `String[] ${argName}_parts=args[${i}].replaceAll("[\\\\[\\\\] ]","").split(",");`;
+//                         argParsingLogic += `int[] ${argName}=new int[${argName}_parts.length==1&&${argName}_parts[0].isEmpty()?0:${argName}_parts.length];`;
+//                         argParsingLogic += `if(${argName}.length>0){for(int j=0;j<${argName}_parts.length;j++)${argName}[j]=Integer.parseInt(${argName}_parts[j]);}`;
+//                         break;
+//                     default: argParsingLogic += `String ${argName}=args[${i}];`;
+//                 }
+//             }
+            
+//             const returnType = outputType ? mapJsTypeToJava(outputType[0]) : 'void';
+//             let callAndPrintLogic;
+//             if (returnType === 'void') callAndPrintLogic = `s.solve(${argNames.join(',')});`;
+//             else if (returnType.includes("[]")) callAndPrintLogic = `System.out.println(java.util.Arrays.toString(s.solve(${argNames.join(',')})).replaceAll(" ",""));`;
+//             else if (returnType === 'String') callAndPrintLogic = `System.out.println("\\""+s.solve(${argNames.join(',')})+"\\"");`;
+//             else callAndPrintLogic = `System.out.println(s.solve(${argNames.join(',')}));`;
+
+//             const nestedSolutionCode = code.replace("class Solution", "static class Solution");
+//             const mainMethod = `public static void main(String[] args){try{${argParsingLogic}Solution s=new Solution();${callAndPrintLogic}}catch(Exception e){e.printStackTrace();}}`;
+//             const wrappedCode = `import java.util.*;import java.io.*;public class ${className}{${nestedSolutionCode}${mainMethod}}`;
+            
+//             await fs.writeFile(javaFilePath, wrappedCode);
+
+//             const compiler = spawn('javac', ['-Xlint:none', javaFilePath]);
+//             let compileError = '';
+//             compiler.stderr.on('data', (data) => { compileError += data.toString(); });
+            
+//             compiler.on('close', (compileCode) => {
+//                 if (compileCode !== 0) {
+//                     return reject({ type: 'error', message: `Compilation Error:\n${compileError}` });
+//                 }
+//                 const runner = spawn('java', ['-cp', execDir, className, ...spawnArgs.map(String)], { timeout: 5000 });
+//                 handleChildProcess(runner, execDir, resolve, reject);
+//             });
+//         } catch (error) {
+//             await handleChildProcess(null, execDir, resolve, reject, error);
+//         }
+//     });
+// };
+
+// const handleChildProcess = (child, dirToClean, resolve, reject, initialError = null) => {
+//     // This cleanup function will now always run, even if the process fails to spawn
+//     const cleanup = async () => {
+//         try {
+//             await fs.rm(dirToClean, { recursive: true, force: true });
+//         } catch (error) {
+//             // Non-critical, just log it
+//         }
+//     };
+    
+//     if (initialError) {
+//         cleanup().then(() => reject({ type: 'error', message: initialError.message }));
+//         return;
+//     }
+
+//     let stdout = '';
+//     let stderr = '';
+//     child.stdout.on('data', (data) => { stdout += data.toString(); });
+//     child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+//     child.on('close', async () => {
+//         await cleanup();
+//         if (stderr) {
+//             reject({ type: 'error', message: stderr.trim() });
+//         } else {
+//             resolve({ type: 'success', output: stdout.trim() });
+//         }
+//     });
+
+//      child.on('error', async (err) => {
+//         await cleanup();
+//         reject({ type: 'error', message: `Execution error: ${err.message}` });
+//     });
+// }
+
+// export { executeCode };
+
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import path from 'path';
@@ -8,8 +173,10 @@ import { parseInputToTypes, mapJsTypeToJava } from './codeGenUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const tempRoot = path.join(__dirname, 'temp');
-await fs.mkdir(tempRoot, { recursive: true }).catch(console.error);
+const tempDir = path.join(__dirname, 'temp');
+
+// Ensure the base temp directory exists on startup
+fs.mkdir(tempDir, { recursive: true }).catch(console.error);
 
 const executeCode = (language, code, input, problemTitle, allTestCases) => {
     switch (language) {
@@ -28,240 +195,175 @@ const executeJavaScript = (code, input) => {
     return new Promise(async (resolve, reject) => {
         const uniqueId = nanoid(8);
         const tempFileName = `script-${uniqueId}.js`;
-        const tempFilePath = path.join(tempRoot, tempFileName);
+        const tempFilePath = path.join(tempDir, tempFileName);
         const wrappedInput = `[${input}]`;
-        // wrap code and call solve(...)
-        const wrappedCode = `try { ${code}
-if (typeof solve !== 'function') { throw new Error("A 'solve' function was not found."); }
-const funcInput = JSON.parse(process.argv[2]);
-const result = Array.isArray(funcInput) ? solve(...funcInput) : solve(funcInput);
-console.log(JSON.stringify(result));
-} catch (e) { console.error(e.name + ": " + e.message); process.exit(1); }`;
-        await fs.writeFile(tempFilePath, wrappedCode);
-        const child = spawn('node', [tempFilePath, wrappedInput], { timeout: 5000 });
-        handleChildProcess(child, uniqueId, resolve, reject, true);
+        const wrappedCode = `try { ${code} if (typeof solve !== 'function') { throw new Error("A 'solve' function was not found."); } const funcInput = JSON.parse(process.argv[2]); const result = Array.isArray(funcInput) ? solve(...funcInput) : solve(funcInput); const output = typeof result === 'string' ? JSON.stringify(result) : JSON.stringify(result); console.log(output); } catch (e) { console.error(e.name + ": " + e.message); }`;
+        
+        try {
+            await fs.writeFile(tempFilePath, wrappedCode);
+            const child = spawn('node', [tempFilePath, wrappedInput], { timeout: 5000 });
+            handleChildProcess(child, tempFilePath, resolve, reject);
+        } catch (error) {
+            reject({ type: 'error', message: `Failed to write or execute script: ${error.message}` });
+        }
     });
 };
 
 const executePython = (code, input) => {
-    return new Promise(async (resolve, reject) => {
+     return new Promise(async (resolve, reject) => {
         const uniqueId = nanoid(8);
         const tempFileName = `script-${uniqueId}.py`;
-        const tempFilePath = path.join(tempRoot, tempFileName);
+        const tempFilePath = path.join(tempDir, tempFileName);
         const wrappedInput = `[${input}]`;
-        const wrappedCode = `import sys, json
-${code}
-
-def main():
-    try:
-        if 'solve' not in globals():
-            raise NameError("A 'solve' function was not found.")
-        func_input = json.loads(sys.argv[1])
-        if isinstance(func_input, list):
-            result = solve(*func_input)
-        else:
-            result = solve(func_input)
-        print(json.dumps(result))
-    except Exception as e:
-        print(type(e).__name__ + ": " + str(e), file=sys.stderr)
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()`;
-        await fs.writeFile(tempFilePath, wrappedCode);
-        const child = spawn('python', [tempFilePath, wrappedInput], { timeout: 5000 });
-        handleChildProcess(child, uniqueId, resolve, reject, true);
+        const wrappedCode = `import sys\nimport json\n\n${code}\n\ndef main():\n    try:\n        if 'solve' not in globals():\n            raise NameError("A 'solve' function was not found.")\n        func_input = json.loads(sys.argv[1])\n        if isinstance(func_input, list):\n            result = solve(*func_input)\n        else:\n            result = solve(func_input)\n        print(json.dumps(result))\n    except Exception as e:\n        print(str(e), file=sys.stderr)\n\nif __name__ == "__main__":\n    main()`;
+        
+        try {
+            await fs.writeFile(tempFilePath, wrappedCode);
+            const child = spawn('python', [tempFilePath, wrappedInput], { timeout: 5000 });
+            handleChildProcess(child, tempFilePath, resolve, reject);
+        } catch (error) {
+            reject({ type: 'error', message: `Failed to write or execute script: ${error.message}` });
+        }
     });
 };
 
 const executeJava = (code, input, allTestCases) => {
     return new Promise(async (resolve, reject) => {
         const uniqueId = nanoid(8);
-        const execDir = path.join(tempRoot, uniqueId);
-        await fs.mkdir(execDir, { recursive: true });
-
+        const execDir = path.join(tempDir, uniqueId);
+        
         try {
-            if (!allTestCases || allTestCases.length === 0) {
-                await cleanupDir(execDir);
-                return reject({ type: 'error', message: 'Cannot generate Java runner without test cases.' });
-            }
+            await fs.mkdir(execDir, { recursive: true });
 
-            const firstTestCase = allTestCases[0];
-            const inputTypes = parseInputToTypes(firstTestCase.input);
-            const outputTypes = parseInputToTypes(firstTestCase.output);
-            if (!inputTypes) {
-                await cleanupDir(execDir);
-                return reject({ type: 'error', message: 'Could not determine input types from the first test case.' });
-            }
-
-            // convert input string to actual args we pass to Java (strings that represent JSON values)
-            let spawnArgs = [];
-            try {
-                spawnArgs = JSON.parse(`[${input}]`);
-            } catch (e) {
-                // if the input provided for a run is not valid JSON, try to fall back to raw split
-                try {
-                    spawnArgs = input.split(',').map(s => s.trim());
-                } catch (e2) {
-                    await cleanupDir(execDir);
-                    return reject({ type: 'error', message: 'Invalid format for test case input.' });
-                }
-            }
-
-            // build parsing logic and arg names
-            let argParsingLogic = '';
-            const argNames = [];
-            for (let i = 0; i < inputTypes.length; i++) {
-                const jsType = inputTypes[i];
-                const javaType = mapJsTypeToJava(jsType);
-                const argName = `arg${i + 1}`;
-                argNames.push(argName);
-
-                // we expect java program to receive args[] where each arg is a JSON-like string representation
-                switch (javaType) {
-                    case 'int':
-                        argParsingLogic += `int ${argName} = Integer.parseInt(args[${i}]);\n`;
-                        break;
-                    case 'double':
-                        argParsingLogic += `double ${argName} = Double.parseDouble(args[${i}]);\n`;
-                        break;
-                    case 'boolean':
-                        argParsingLogic += `boolean ${argName} = Boolean.parseBoolean(args[${i}]);\n`;
-                        break;
-                    case 'String':
-                        // strip surrounding quotes if present
-                        argParsingLogic += `String ${argName} = args[${i}];\n`;
-                        argParsingLogic += `${argName} = ${argName}.length()>1 && ${argName}.startsWith("\\"") && ${argName}.endsWith("\\"") ? ${argName}.substring(1, ${argName}.length()-1) : ${argName};\n`;
-                        break;
-                    case 'int[]':
-                        argParsingLogic += `String raw${i} = args[${i}].trim();\n`;
-                        argParsingLogic += `if(raw${i}.startsWith("[")) raw${i} = raw${i}.substring(1, raw${i}.length()-1);\n`;
-                        argParsingLogic += `int[] ${argName} = raw${i}.isEmpty() ? new int[0] : java.util.Arrays.stream(raw${i}.split(",")).map(String::trim).filter(s->!s.isEmpty()).mapToInt(Integer::parseInt).toArray();\n`;
-                        break;
-                    case 'String[]':
-                        argParsingLogic += `String raw${i} = args[${i}].trim();\n`;
-                        argParsingLogic += `if(raw${i}.startsWith("[")) raw${i} = raw${i}.substring(1, raw${i}.length()-1);\n`;
-                        // split on commas but keep items (basic splitting — accepts quoted or unquoted values)
-                        argParsingLogic += `String[] ${argName} = raw${i}.isEmpty() ? new String[0] : java.util.Arrays.stream(raw${i}.split(\",\")).map(String::trim).map(s->(s.length()>1 && s.startsWith("\\"") && s.endsWith("\\""))? s.substring(1, s.length()-1): s).toArray(String[]::new);\n`;
-                        break;
-                    case 'boolean[]':
-                        argParsingLogic += `String raw${i} = args[${i}].trim();\n`;
-                        argParsingLogic += `if(raw${i}.startsWith("[")) raw${i} = raw${i}.substring(1, raw${i}.length()-1);\n`;
-                        argParsingLogic += `boolean[] ${argName} = raw${i}.isEmpty() ? new boolean[0] : java.util.Arrays.stream(raw${i}.split(\",\")).map(String::trim).filter(s->!s.isEmpty()).mapToInt(s->Boolean.parseBoolean(s)?1:0).toArray();\n`;
-                        // convert int[] to boolean[] manually
-                        argParsingLogic += `if(${argName}.length>0) { boolean[] tmp = new boolean[${argName}.length]; for(int _i=0; _i<${argName}.length; _i++) tmp[_i] = ${argName}[_i] == 1; ${argName} = tmp; }\n`;
-                        break;
-                    default:
-                        // fallback to String and let user's method convert/parse if needed
-                        argParsingLogic += `String ${argName} = args[${i}];\n`;
-                        argParsingLogic += `${argName} = ${argName}.length()>1 && ${argName}.startsWith("\\"") && ${argName}.endsWith("\\"") ? ${argName}.substring(1, ${argName}.length()-1) : ${argName};\n`;
-                }
-            }
-
-            // determine return printing behavior
-            const returnTypeJs = outputTypes && outputTypes.length > 0 ? outputTypes[0] : null;
-            const returnType = mapJsTypeToJava(returnTypeJs);
-            let callAndPrintLogic = '';
-            // Create robust print logic:
-            // - arrays -> Arrays.toString
-            // - otherwise -> System.out.println(result)
-            if (returnType && returnType.endsWith("[]")) {
-                callAndPrintLogic = `${returnType} res = s.solve(${argNames.join(', ')});\nSystem.out.println(java.util.Arrays.toString(res).replaceAll(" ", ""));`;
-            } else {
-                // try to call and print; if void -> call only
-                if (returnType === 'void') {
-                    callAndPrintLogic = `s.solve(${argNames.join(', ')});`;
-                } else {
-                    callAndPrintLogic = `Object res = s.solve(${argNames.join(', ')});\nSystem.out.println(res);`;
-                }
-            }
-
-            // Compose final class (we assume user's code defines class Solution with solve(...) method)
-            const className = `Main_${uniqueId}`;
+            const className = `Main`;
             const javaFile = `${className}.java`;
             const javaFilePath = path.join(execDir, javaFile);
 
-            const mainMethod = `public static void main(String[] args) {
-    try {
-        ${argParsingLogic}
-        Solution s = new Solution();
-        ${callAndPrintLogic}
-    } catch (Exception e) {
-        e.printStackTrace();
-        System.exit(1);
+            if (!allTestCases || allTestCases.length === 0) {
+                throw new Error('Cannot generate Java runner without test cases.');
+            }
+            
+            const firstTestCase = allTestCases[0];
+            const inputTypes = parseInputToTypes(firstTestCase.input);
+            const outputType = parseInputToTypes(firstTestCase.output);
+
+            if (!inputTypes) {
+                throw new Error('Could not determine input types from the first test case.');
+            }
+            
+            let argParsingLogic = '';
+            let argNames = [];
+            let spawnArgs = JSON.parse(`[${input}]`);
+
+            for (let i = 0; i < inputTypes.length; i++) {
+                const javaType = mapJsTypeToJava(inputTypes[i]);
+                const argName = `arg${i + 1}`;
+                argNames.push(argName);
+                
+                switch(javaType) {
+                    case "int": argParsingLogic += `int ${argName}=Integer.parseInt(args[${i}]);`; break;
+                    case "String":
+                        argParsingLogic += `String ${argName}=args[${i}];`;
+                        argParsingLogic += `if(${argName}.startsWith("\\"")&&${argName}.endsWith("\\""))${argName}=${argName}.substring(1,${argName}.length()-1);`;
+                        break;
+                    case "int[]":
+                        argParsingLogic += `String[] ${argName}_parts=args[${i}].replaceAll("[\\\\[\\\\] ]","").split(",");`;
+                        argParsingLogic += `int[] ${argName}=new int[${argName}_parts.length==1&&${argName}_parts[0].isEmpty()?0:${argName}_parts.length];`;
+                        argParsingLogic += `if(${argName}.length>0){for(int j=0;j<${argName}_parts.length;j++)${argName}[j]=Integer.parseInt(${argName}_parts[j]);}`;
+                        break;
+                    default: argParsingLogic += `String ${argName}=args[${i}];`;
+                }
+            }
+            
+            const returnType = outputType ? mapJsTypeToJava(outputType[0]) : 'void';
+            let callAndPrintLogic;
+            if (returnType === 'void') callAndPrintLogic = `s.solve(${argNames.join(',')});`;
+            else if (returnType.includes("[]")) callAndPrintLogic = `System.out.println(java.util.Arrays.toString(s.solve(${argNames.join(',')})).replaceAll(" ",""));`;
+            else if (returnType === 'String') callAndPrintLogic = `System.out.println("\\""+s.solve(${argNames.join(',')})+"\\"");`;
+            else callAndPrintLogic = `System.out.println(s.solve(${argNames.join(',')}));`;
+
+            const nestedSolutionCode = code.replace("class Solution", "static class Solution");
+            
+            // --- FIX: Use a clean, multi-line template for the generated Java code ---
+            const wrappedCode = `
+import java.util.*;
+import java.io.*;
+
+public class ${className} {
+    ${nestedSolutionCode}
+
+    public static void main(String[] args) {
+        try {
+            ${argParsingLogic}
+            Solution s = new Solution();
+            ${callAndPrintLogic}
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
     }
 }`;
-
-            const wrappedCode = `import java.util.*;\nimport java.io.*;\n${code}\npublic class ${className} { ${mainMethod} }`;
+            
             await fs.writeFile(javaFilePath, wrappedCode);
 
-            // compile into execDir
-            const compiler = spawn('javac', ['-d', execDir, javaFilePath]);
+            const compiler = spawn('javac', ['-Xlint:none', javaFilePath]);
             let compileError = '';
             compiler.stderr.on('data', (data) => { compileError += data.toString(); });
-            compiler.on('close', async (codeExit) => {
-                if (codeExit !== 0) {
-                    await cleanupDir(execDir);
-                    return reject({ type: 'error', message: `Compilation Error:\n${compileError}` });
+            
+            compiler.on('close', (compileCode) => {
+                if (compileCode !== 0) {
+                    // Pass the directory to clean up on compilation failure
+                    handleChildProcess(null, execDir, resolve, reject, new Error(`Compilation Error:\n${compileError}`));
+                } else {
+                    const runner = spawn('java', ['-cp', execDir, className, ...spawnArgs.map(String)], { timeout: 5000 });
+                    handleChildProcess(runner, execDir, resolve, reject);
                 }
-                // run
-                const runner = spawn('java', ['-cp', execDir, className, ...spawnArgs.map(String)], { timeout: 5000 });
-                handleChildProcess(runner, uniqueId, resolve, reject, false, execDir);
             });
-
-        } catch (err) {
-            await cleanupDir(execDir);
-            return reject({ type: 'error', message: err.message || String(err) });
+        } catch (error) {
+            // Pass the directory to clean up on any initial error
+            handleChildProcess(null, execDir, resolve, reject, error);
         }
     });
 };
 
-const handleChildProcess = (child, uniqueId, resolve, reject, isSingleFile = true, execDir = null) => {
+const handleChildProcess = (child, fileOrDirPath, resolve, reject, initialError = null) => {
+    const cleanup = async () => {
+        try {
+            const stats = await fs.stat(fileOrDirPath);
+            if (stats.isDirectory()) {
+                await fs.rm(fileOrDirPath, { recursive: true, force: true });
+            } else {
+                await fs.unlink(fileOrDirPath);
+            }
+        } catch (error) {
+            if (error.code !== 'ENOENT') { // Ignore if file/dir doesn't exist
+                // console.error("Cleanup failed:", error);
+            }
+        }
+    };
+    
+    if (initialError) {
+        cleanup().then(() => reject({ type: 'error', message: initialError.message }));
+        return;
+    }
+
     let stdout = '';
     let stderr = '';
-
     child.stdout.on('data', (data) => { stdout += data.toString(); });
     child.stderr.on('data', (data) => { stderr += data.toString(); });
 
-    child.on('close', async (code) => {
-        // cleanup: if execDir provided remove recursively, otherwise remove files that contain uniqueId
-        try {
-            if (execDir) {
-                await cleanupDir(execDir);
-            } else {
-                // remove single temp files that include uniqueId in tempRoot
-                const files = await fs.readdir(tempRoot);
-                const filesToDelete = files.filter(f => f.includes(uniqueId));
-                await Promise.all(filesToDelete.map(f => fs.unlink(path.join(tempRoot, f)).catch(()=>{})));
-            }
-        } catch (cleanupErr) {
-            console.error("Cleanup error:", cleanupErr);
+    child.on('close', async () => {
+        await cleanup();
+        if (stderr) {
+            reject({ type: 'error', message: stderr.trim() });
+        } else {
+            resolve({ type: 'success', output: stdout.trim() });
         }
-
-        if (code !== 0 || stderr) {
-            // prefer stderr content
-            const errMsg = (stderr && stderr.trim()) ? stderr.trim() : `Process exited with code ${code}`;
-            return reject({ type: 'error', message: errMsg });
-        }
-
-        return resolve({ type: 'success', output: stdout.trim() });
     });
 
-    child.on('error', async (err) => {
-        if (execDir) await cleanupDir(execDir).catch(()=>{});
+     child.on('error', async (err) => {
+        await cleanup();
         reject({ type: 'error', message: `Execution error: ${err.message}` });
     });
-};
-
-const cleanupDir = async (dir) => {
-    try {
-        // Remove files then remove dir
-        const entries = await fs.readdir(dir);
-        await Promise.all(entries.map(e => fs.unlink(path.join(dir, e)).catch(()=>{})));
-        await fs.rmdir(dir).catch(()=>{});
-    } catch (e) {
-        // best-effort
-    }
-};
+}
 
 export { executeCode };
