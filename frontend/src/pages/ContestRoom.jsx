@@ -28,9 +28,11 @@ const ContestRoom = () => {
             setCode(starter ? starter.code : `// No starter code for ${lang}`);
         }
     };
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+
     
     useEffect(() => {
-        socket.current = io('http://localhost:5000');
+        socket.current = io(SOCKET_URL);
         socket.current.emit('joinRoom', roomId);
 
         const fetchContestData = async () => {
