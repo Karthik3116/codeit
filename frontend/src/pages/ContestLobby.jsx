@@ -13,6 +13,7 @@ const ContestLobby = () => {
     const [contest, setContest] = useState(null);
     const [participants, setParticipants] = useState([]);
     const socket = useRef(null);
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 
     useEffect(() => {
         const fetchLobbyData = async () => {
@@ -27,7 +28,7 @@ const ContestLobby = () => {
         };
         fetchLobbyData();
         
-        socket.current = io('http://localhost:5000');
+        socket.current = io(SOCKET_URL);
         
         const handleParticipantJoined = (updatedParticipants) => {
             setParticipants(updatedParticipants);
