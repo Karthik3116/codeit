@@ -3,25 +3,31 @@ import Problem from '../models/problemModel.js';
 import { nanoid } from 'nanoid';
 
 export const createContest = async (req, res) => {
-    const { duration } = req.body;
+    const { duration, questions } = req.body;
     if (!duration || duration < 10) {
         return res.status(400).json({ message: "Contest duration must be at least 10 minutes." });
     }
+    if (!questions || questions.length === 0) {
+        return res.status(400).json({ message: "A contest must have at least one question." });
+    }
+    
     try {
-        const problems = await Problem.aggregate([{ $sample: { size: 3 } }]);
-        if (problems.length < 1) {
-            return res.status(500).json({ message: "Not enough problems in the database." });
-        }
-        const problemIds = problems.map(p => p._id);
         const newContest = new Contest({
             roomId: nanoid(8),
             createdBy: req.user._id,
             duration,
             status: 'waiting',
-            questions: problemIds,
+            questions: questions,
             participants: [{ userId: req.user._id, userName: req.user.name }],
-            leaderboard: [{ userId: req.user._id, userName: req.user.name, score: 0, solvedProblems: [] }]
+            // FIX: Initialize leaderboard with new schema
+            leaderboard: [{ 
+                userId: req.user._id, 
+                userName: req.user.name, 
+                score: 0, 
+                problemScores: [] 
+            }]
         });
+        
         const createdContest = await newContest.save();
         res.status(201).json(createdContest);
     } catch (error) {
@@ -30,30 +36,34 @@ export const createContest = async (req, res) => {
     }
 };
 
+
+
+
 export const joinContest = async (req, res) => {
     const { roomId } = req.body;
     try {
         let contest = await Contest.findOne({ roomId });
-        if (!contest) {
-            return res.status(404).json({ message: "Contest not found." });
-        }
-        if (contest.status !== 'waiting') {
-            return res.status(400).json({ message: "This contest is not open for joining." });
-        }
+        if (!contest) return res.status(404).json({ message: "Contest not found." });
+        if (contest.status !== 'waiting') return res.status(400).json({ message: "This contest is not open for joining." });
+        
         const isParticipant = contest.participants.some(p => p.userId.equals(req.user._id));
         if (isParticipant) {
             const populatedContest = await contest.populate('participants.userId', 'name');
             return res.status(200).json(populatedContest);
         }
-        const newParticipant = { userId: req.user._id, userName: req.user.name };
-        contest.participants.push(newParticipant);
-        contest.leaderboard.push({ userId: req.user._id, userName: req.user.name, score: 0, solvedProblems: [] });
+
+        contest.participants.push({ userId: req.user._id, userName: req.user.name });
+        // FIX: Initialize new participant with the new schema
+        contest.leaderboard.push({ 
+            userId: req.user._id, 
+            userName: req.user.name, 
+            score: 0, 
+            problemScores: [] 
+        });
         
         let updatedContest = await contest.save();
         updatedContest = await updatedContest.populate('participants.userId', 'name');
-
         req.io.to(roomId).emit('participant:joined', updatedContest.participants);
-        
         res.status(200).json(updatedContest);
     } catch (error) {
         console.error("Error joining contest:", error);
@@ -110,21 +120,26 @@ export const startContest = async (req, res) => {
 
 export const getContestQuestions = async (req, res) => {
     try {
-        const contest = await Contest.findOne({ roomId: req.params.id }).populate('questions', 'title description testCases._id testCases.input starterCode');
+        // No longer need to populate, as questions are embedded
+        const contest = await Contest.findOne({ roomId: req.params.id });
         if (!contest) {
             return res.status(404).json({ message: 'Contest not found' });
         }
+
         const isParticipant = contest.participants.some(p => p.userId.equals(req.user._id));
         if (!isParticipant) {
             return res.status(403).json({ message: 'User not authorized to access this contest' });
         }
+        
+        // Map the embedded questions to the format the frontend expects
         const questionsForUser = contest.questions.map(q => ({
-            _id: q._id,
+            _id: q._id, // The embedded document has its own _id
             title: q.title,
             description: q.description,
             sampleInput: q.testCases.length > 0 ? q.testCases[0].input : "[]",
             starterCode: q.starterCode
         }));
+
         res.json({
             _id: contest._id,
             roomId: contest.roomId,
@@ -132,11 +147,11 @@ export const getContestQuestions = async (req, res) => {
             endTime: contest.endTime,
             questions: questionsForUser
         });
+
     } catch (error) {
         res.status(500).json({ message: "Server Error" });
     }
 };
-
 export const getLeaderboard = async (req, res) => {
     try {
         const contest = await Contest.findOne({ roomId: req.params.id });

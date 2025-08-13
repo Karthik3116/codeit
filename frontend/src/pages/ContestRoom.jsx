@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
 import toast from 'react-hot-toast';
 import API from '../api';
@@ -11,6 +11,7 @@ import { FaPlay, FaPaperPlane } from 'react-icons/fa';
 
 const ContestRoom = () => {
     const { roomId } = useParams();
+    const navigate = useNavigate();
     const [contest, setContest] = useState(null);
     const [questions, setQuestions] = useState([]);
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -22,45 +23,64 @@ const ContestRoom = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const socket = useRef(null);
     
+    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
+
+    // This effect handles data fetching
+    useEffect(() => {
+        const fetchContestData = async () => {
+            try {
+                const { data } = await API.get(`/contest/${roomId}/questions`);
+                setContest(data);
+                setQuestions(data.questions);
+                if (data.questions.length > 0) {
+                    const initialStarter = data.questions[0].starterCode.find(sc => sc.language === 'javascript');
+                    setCode(initialStarter ? initialStarter.code : '// Start coding here');
+                }
+                const leaderboardRes = await API.get(`/contest/${roomId}/leaderboard`);
+                setLeaderboard(leaderboardRes.data);
+            } catch (error) {
+                toast.error(error.response?.data?.message || "Failed to load contest.");
+                navigate("/dashboard");
+            }
+        };
+        fetchContestData();
+    }, [roomId, navigate]);
+
+
+    // FIX: This refactored useEffect hook properly manages the socket connection and listeners
+    useEffect(() => {
+        // Establish connection
+        socket.current = io(SOCKET_URL);
+        
+        // Join the specific contest room
+        socket.current.emit('joinRoom', roomId);
+
+        // Define the event handler
+        const handleLeaderboardUpdate = (newLeaderboard) => {
+            setLeaderboard(newLeaderboard);
+            toast.success('Leaderboard updated!');
+        };
+        
+        // Attach the listener
+        socket.current.on('leaderboard:update', handleLeaderboardUpdate);
+
+        // Cleanup function to run when the component unmounts
+        return () => {
+            if (socket.current) {
+                // Detach the specific listener and disconnect
+                socket.current.off('leaderboard:update', handleLeaderboardUpdate);
+                socket.current.disconnect();
+            }
+        };
+    }, [roomId, SOCKET_URL]); // Dependencies ensure this runs only when the room changes
+
     const updateEditorCode = (qIndex, lang) => {
         if (questions.length > 0) {
             const starter = questions[qIndex].starterCode.find(sc => sc.language === lang);
             setCode(starter ? starter.code : `// No starter code for ${lang}`);
         }
     };
-    const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
-
     
-    useEffect(() => {
-        socket.current = io(SOCKET_URL);
-        socket.current.emit('joinRoom', roomId);
-
-        const fetchContestData = async () => {
-            try {
-                const { data } = await API.get(`/contest/${roomId}/questions`);
-                setContest(data);
-                setQuestions(data.questions);
-                const initialStarter = data.questions[0].starterCode.find(sc => sc.language === 'javascript');
-                setCode(initialStarter ? initialStarter.code : '// Start coding here');
-                
-                const leaderboardRes = await API.get(`/contest/${roomId}/leaderboard`);
-                setLeaderboard(leaderboardRes.data);
-            } catch (error) {
-                toast.error(error.response?.data?.message || "Failed to load contest.");
-            }
-        };
-        fetchContestData();
-
-        socket.current.on('leaderboard:update', (newLeaderboard) => {
-            setLeaderboard(newLeaderboard);
-            toast.success('Leaderboard updated!');
-        });
-        
-        return () => {
-            if (socket.current) socket.current.disconnect();
-        };
-    }, [roomId]);
-
     const handleLanguageChange = (e) => {
         const newLang = e.target.value;
         setLanguage(newLang);
@@ -81,7 +101,8 @@ const ContestRoom = () => {
                 language,
                 code,
                 input: currentProblem.sampleInput,
-                problemId: currentProblem._id // Pass problemId for context
+                problemId: currentProblem._id,
+                contestId: contest._id
             });
             if(data.type === 'error'){
                 setOutput(`Error:\n${data.message}`);
@@ -108,15 +129,19 @@ const ContestRoom = () => {
                 contestId: contest._id
             });
             
-            if (data.success) {
-                toast.success("Congratulations! All test cases passed.", { id: toastId });
-                setOutput("Result: Accepted\nAll test cases passed!");
+            const { success, testCasesPassed, totalTestCases, score } = data;
+            
+            toast.dismiss(toastId);
+            if (success) {
+                toast.success(`Congratulations! All ${totalTestCases} test cases passed.`);
             } else {
-                toast.error("Some test cases failed.", { id: toastId });
-                setOutput(`Result: Wrong Answer\nFailed on a hidden test case.`);
+                toast.error(`Submission failed. Passed ${testCasesPassed}/${totalTestCases} test cases.`);
             }
+            setOutput(`Result: ${success ? 'Accepted' : 'Partial/Wrong Answer'}\nScore for this submission: ${score}\nPassed: ${testCasesPassed}/${totalTestCases}`);
+
         } catch (error) {
-             toast.error(error.response?.data?.message || 'Submission failed', { id: toastId });
+             toast.dismiss(toastId);
+             toast.error(error.response?.data?.message || 'Submission failed');
         } finally {
             setIsSubmitting(false);
         }
@@ -130,7 +155,6 @@ const ContestRoom = () => {
 
     return (
         <div className="h-[calc(100vh-120px)] grid grid-cols-12 gap-4">
-            {/* Left Panel */}
             <div className="col-span-3 bg-gray-800 p-4 rounded-lg overflow-y-auto">
                 <h2 className="text-xl font-bold text-teal-400 mb-4">Problems</h2>
                 {questions.map((q, index) => (
@@ -146,7 +170,6 @@ const ContestRoom = () => {
                 ))}
             </div>
 
-            {/* Middle Panel */}
             <div className="col-span-6 flex flex-col gap-4">
                 <div className="bg-gray-800 p-4 rounded-lg flex-shrink-0">
                     <h2 className="text-2xl font-bold text-white mb-2">{currentProblem.title}</h2>
@@ -170,7 +193,6 @@ const ContestRoom = () => {
                 </div>
             </div>
 
-            {/* Right Panel */}
             <div className="col-span-3 flex flex-col gap-4">
                 {contest.endTime && <CountdownTimer endTime={contest.endTime} />}
                 <div className="flex-grow">
