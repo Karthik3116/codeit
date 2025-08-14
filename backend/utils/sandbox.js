@@ -219,7 +219,7 @@ const executePython = (code, input) => {
         
         try {
             await fs.writeFile(tempFilePath, wrappedCode);
-            const child = spawn('python', [tempFilePath, wrappedInput], { timeout: 5000 });
+            const child = spawn('python3', [tempFilePath, wrappedInput], { timeout: 5000 });
             handleChildProcess(child, tempFilePath, resolve, reject);
         } catch (error) {
             reject({ type: 'error', message: `Failed to write or execute script: ${error.message}` });
