@@ -8,13 +8,17 @@ import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import { nanoid } from 'nanoid';
 import aiRoutes from './routes/aiRoutes.js'; // <-- ADD THIS IMPORT
-
+import path from 'path';
+import fs from 'fs/promises';
+import { fileURLToPath } from 'url';
 
 // Middleware and Routes
 import { protect } from './middleware/authMiddleware.js';
 import authRoutes from './routes/authRoutes.js';
 import contestRoutes from './routes/contestRoutes.js';
 import codeRoutes from './routes/codeRoutes.js';
+
+
 
 // The global Problem model is no longer needed
 // import Problem from './models/problemModel.js'; 
@@ -66,12 +70,43 @@ app.use('/api/ai', protect, aiRoutes); // <-- ADD THIS LINE
 
 
 // --- Socket.IO Connection Handling ---
+// io.on('connection', (socket) => {
+//   console.log('A user connected:', socket.id);
+//   socket.on('joinRoom', (roomId) => {
+//     socket.join(roomId);
+//     console.log(`User ${socket.id} joined room ${roomId}`);
+//   });
+//   socket.on('disconnect', () => {
+//     console.log('User disconnected:', socket.id);
+//   });
+// });
+
 io.on('connection', (socket) => {
   console.log('A user connected:', socket.id);
+
   socket.on('joinRoom', (roomId) => {
     socket.join(roomId);
     console.log(`User ${socket.id} joined room ${roomId}`);
   });
+
+  socket.on('chat:message', (data) => {
+    const { roomId, message, user } = data;
+    io.to(roomId).emit('chat:message', {
+        id: nanoid(8), // Give each message a unique ID
+        user,
+        text: message,
+        timestamp: new Date(),
+        seenBy: [{ userId: user.id || user._id, userName: user.name }], // Sender has seen it by default
+    });
+  });
+
+  // --- NEW: Event handler for when a user sees messages ---
+  socket.on('chat:seen', (data) => {
+    const { roomId, messageIds, user } = data;
+    // Broadcast to the room that this user has seen these messages
+    io.to(roomId).emit('chat:seenUpdate', { messageIds, user });
+  });
+
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
   });

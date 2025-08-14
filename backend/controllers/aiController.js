@@ -129,7 +129,7 @@ export const generateQuestion = async (req, res) => {
         The JSON object must have the following structure:
         {
           "title": "A concise, well-defined title for the problem",
-          "description": "A clear, well-formatted description of the problem. Use markdown for code snippets (e.g., \`nums\`). Explain the input and output format clearly.",
+          "description": "A clear, well-formatted description of the problem. Use markdown for code snippets (e.g., \`nums\`). Explain the input and output format clearly. with two sample testcase and output with explinations for them",
           "testCases": [
             {
               "input": "A string representing the input for the test case, formatted as comma-separated JSON values. Example: [1,2,3], 5",
@@ -137,7 +137,7 @@ export const generateQuestion = async (req, res) => {
             }
           ]
         }
-        Generate at least 4 diverse test cases, including common examples and edge cases.
+        Generate at least 4 diverse test cases, including common examples and edge cases must be 100% valid.
         Ensure the input and output strings in the test cases are valid JSON or primitives that can be parsed as JSON.
         
         User's Request: "${userRequest}"
