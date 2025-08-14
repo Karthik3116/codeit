@@ -291,7 +291,7 @@ export const generateStarterCode = (inputTypes = [], outputType = null, problemT
     const javaReturnType = outputType ? mapJsTypeToJava(outputType) : 'void';
     const javaArgs = inputTypes.map((type, i) => `${mapJsTypeToJava(type)} ${argNames[i]}`).join(', ');
     const javaStarter =
-`class Solution {
+`import java.util.* \nclass Solution {
     public ${javaReturnType} solve(${javaArgs}) {
         // Your logic here
     }
