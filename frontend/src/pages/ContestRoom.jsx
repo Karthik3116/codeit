@@ -1,5 +1,4 @@
 
-
 import { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import io from 'socket.io-client';
@@ -17,7 +16,13 @@ const ContestRoom = () => {
     const [questions, setQuestions] = useState([]);
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [language, setLanguage] = useState('javascript');
-    const [code, setCode] = useState('');
+    
+    const [allCode, setAllCode] = useState({
+        javascript: '',
+        python: '',
+        java: '',
+    });
+    
     const [output, setOutput] = useState('');
     const [leaderboard, setLeaderboard] = useState([]);
     const [isRunning, setIsRunning] = useState(false);
@@ -26,11 +31,15 @@ const ContestRoom = () => {
 
     const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || 'http://localhost:5000';
 
-    const updateEditorCode = (qIndex, lang) => {
-        if (questions.length > 0 && questions[qIndex]) {
-            const starter = questions[qIndex].starterCode.find(sc => sc.language === lang);
-            setCode(starter ? starter.code : `// No starter code for ${lang}`);
-        }
+    const initializeCodeState = (question) => {
+        if (!question || !question.starterCode) return;
+        const initialCodeState = { javascript: '', python: '', java: '' };
+        question.starterCode.forEach(sc => {
+            if (initialCodeState.hasOwnProperty(sc.language)) {
+                initialCodeState[sc.language] = sc.code;
+            }
+        });
+        setAllCode(initialCodeState);
     };
 
     useEffect(() => {
@@ -40,8 +49,7 @@ const ContestRoom = () => {
                 setContest(data);
                 setQuestions(data.questions);
                 if (data.questions.length > 0) {
-                    const initialStarter = data.questions[0].starterCode.find(sc => sc.language === 'javascript');
-                    setCode(initialStarter ? initialStarter.code : '// Start coding here');
+                    initializeCodeState(data.questions[0]);
                 }
                 const leaderboardRes = await API.get(`/contest/${roomId}/leaderboard`);
                 setLeaderboard(leaderboardRes.data);
@@ -72,15 +80,22 @@ const ContestRoom = () => {
         };
     }, [roomId, SOCKET_URL]);
 
+    const handleCodeChange = (newCode) => {
+        setAllCode(prev => ({
+            ...prev,
+            [language]: newCode,
+        }));
+    };
+
     const handleLanguageChange = (e) => {
         const newLang = e.target.value;
         setLanguage(newLang);
-        updateEditorCode(currentQuestionIndex, newLang);
     };
 
     const handleQuestionChange = (index) => {
+        if (index === currentQuestionIndex) return;
         setCurrentQuestionIndex(index);
-        updateEditorCode(index, language);
+        initializeCodeState(questions[index]);
     };
 
     const handleRunCode = async () => {
@@ -90,7 +105,7 @@ const ContestRoom = () => {
             const currentProblem = questions[currentQuestionIndex];
             const { data } = await API.post('/code/run', {
                 language,
-                code,
+                code: allCode[language],
                 input: currentProblem.sampleInput,
                 problemId: currentProblem._id,
                 contestId: contest._id
@@ -115,7 +130,7 @@ const ContestRoom = () => {
             const currentProblem = questions[currentQuestionIndex];
             const { data } = await API.post('/code/submit', {
                 language,
-                code,
+                code: allCode[language],
                 problemId: currentProblem._id,
                 contestId: contest._id
             });
@@ -164,7 +179,10 @@ const ContestRoom = () => {
                     <div className="prose prose-invert max-w-none text-gray-300" dangerouslySetInnerHTML={{ __html: currentProblem.description.replace(/\n/g, '<br/>') }} />
                 </div>
                 <div className="h-1/3 flex-shrink-0">
-                    <Leaderboard leaderboard={leaderboard} />
+                    <Leaderboard 
+                        leaderboard={leaderboard} 
+                        contestStartTime={contest.startTime} 
+                    />
                 </div>
             </div>
 
@@ -183,7 +201,11 @@ const ContestRoom = () => {
                         {contest.endTime && <CountdownTimer endTime={contest.endTime} />}
                     </div>
                     <div className="flex-grow">
-                         <CodeEditor code={code} setCode={setCode} language={language} />
+                         <CodeEditor 
+                            code={allCode[language]} 
+                            setCode={handleCodeChange} 
+                            language={language} 
+                         />
                     </div>
                 </div>
                 <div className="bg-gray-800 rounded-lg p-4 flex-shrink-0">

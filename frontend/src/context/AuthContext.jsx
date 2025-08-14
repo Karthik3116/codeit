@@ -10,6 +10,7 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const navigate = useNavigate();
 
+    // This function remains the same, handles initial load check
     useEffect(() => {
         const storedUserInfo = localStorage.getItem('userInfo');
         if (storedUserInfo) {
@@ -22,7 +23,6 @@ export const AuthProvider = ({ children }) => {
                     setUser(userInfo);
                 }
             } catch (error) {
-                console.error("Invalid token:", error);
                 logout();
             }
         }
@@ -38,7 +38,6 @@ export const AuthProvider = ({ children }) => {
         } catch (error) {
             const message = error.response?.data?.message || "Login failed!";
             toast.error(message);
-            console.error(error);
         }
     };
 
@@ -52,7 +51,6 @@ export const AuthProvider = ({ children }) => {
         } catch (error) {
              const message = error.response?.data?.message || "Signup failed!";
             toast.error(message);
-            console.error(error);
         }
     };
 
@@ -61,6 +59,29 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
         navigate('/login');
     };
+
+    // --- NEW: Axios interceptor for handling 401 errors ---
+    useEffect(() => {
+        const responseInterceptor = API.interceptors.response.use(
+            // If the response is successful, just return it
+            (response) => response,
+            // If there's an error in the response
+            (error) => {
+                // Check if the error is a 401 Unauthorized
+                if (error.response && error.response.status === 401) {
+                    toast.error("Your session has expired. Please log in again.");
+                    logout();
+                }
+                // Important: Reject the promise so the original caller can handle it
+                return Promise.reject(error);
+            }
+        );
+
+        // Cleanup function to remove the interceptor when the component unmounts
+        return () => {
+            API.interceptors.response.eject(responseInterceptor);
+        };
+    }, [navigate]); // Add navigate as a dependency
 
     return (
         <AuthContext.Provider value={{ user, login, logout, signup }}>
