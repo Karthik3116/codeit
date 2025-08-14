@@ -1,10 +1,12 @@
-# backend/Dockerfile
 
-# 1. Start with an official Node.js image
 FROM node:18-slim
 
-# 2. Install the Java Development Kit (JDK)
-RUN apt-get update && apt-get install -y default-jdk --no-install-recommends
+
+RUN apt-get update && apt-get install -y \
+    default-jdk \
+    python3 \
+    --no-install-recommends \
+    && rm -rf /var/lib/apt/lists/*
 
 # 3. Set up the working directory inside the container
 WORKDIR /usr/src/app
