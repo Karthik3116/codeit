@@ -69,9 +69,7 @@ public class Main {
                 sb.append(next); i++; continue;
             } else sb.append(ch);
         }
-        String tmp = sb.toString();
-        tmp = tmp.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r");
-        return tmp;
+        return sb.toString();
     }
 
     static Object convertArg(Object parsed, Class<?> paramType) throws Exception {
@@ -154,7 +152,6 @@ public class Main {
         List<Method> candidates = new ArrayList<>();
         for (Method m : methods) if (m.getName().equals("solve")) candidates.add(m);
 
-        // exact param count
         for (Method m : candidates) {
             Class<?>[] pts = m.getParameterTypes();
             if (pts.length == argsList.size()) {
@@ -167,7 +164,6 @@ public class Main {
             }
         }
 
-        // single param receiving all args
         for (Method m : candidates) {
             Class<?>[] pts = m.getParameterTypes();
             if (pts.length == 1) {
@@ -179,7 +175,6 @@ public class Main {
             }
         }
 
-        // varargs
         for (Method m : candidates) {
             if (m.isVarArgs()) {
                 Class<?>[] pts = m.getParameterTypes();
@@ -200,7 +195,6 @@ public class Main {
             }
         }
 
-        // no-arg
         for (Method m : candidates) {
             if (m.getParameterTypes().length == 0) {
                 m.setAccessible(true);
