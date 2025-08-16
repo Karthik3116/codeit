@@ -2430,10 +2430,12 @@ const mainBinDir = path.join(tempDir, 'main_bin');
 const compilationCacheDir = path.join(tempDir, 'java_cache');
 
 /* Configuration */
-const DEFAULT_LOCK_WAIT_MS = 30000;     // how long to wait for another compiler to finish
-const DEFAULT_POLL_INTERVAL_MS = 150;   // how often to poll when waiting
+const DEFAULT_LOCK_WAIT_MS = 30000;     // wait for another compiler to finish
+const DEFAULT_POLL_INTERVAL_MS = 150;   // poll interval while waiting
 const TMP_CLEANUP_AGE_MS = 1000 * 60 * 10; // remove tmp dirs older than 10 minutes during compile
-const JAVA_RELEASE_TARGET = '17'; // compile with --release 17 for compatibility with Java 17 runtime
+
+/* Global detected Java runtime target (string like '17') */
+let DETECTED_JAVA_RELEASE = null;
 
 /* Ensure base directories exist */
 const ensureDirs = async () => {
@@ -2459,13 +2461,48 @@ const spawnPromise = (command, args, opts = {}) => {
   });
 };
 
-/* Helper to try compiling with flags that ensure compatibility with older runtimes.
-   Tries (--release <target>) first, then -source/-target, then plain javac as a fallback.
+/* Detect runtime 'java -version' and extract major release (e.g., "17" or "21") */
+const detectJavaRuntimeRelease = async () => {
+  if (DETECTED_JAVA_RELEASE) return DETECTED_JAVA_RELEASE;
+  try {
+    // `java -version` prints to stderr in many JDK distributions; capture both
+    const res = await spawnPromise('java', ['-version']);
+    const out = (res.stdout || '') + (res.stderr || '');
+    const firstLine = (out.split('\n')[0] || '').trim();
+    // Typical lines:
+    // java version "17.0.8"  or openjdk version "21.0.2" or java version "1.8.0_xx"
+    const m = firstLine.match(/version\s+"([^"]+)"/i);
+    let versionStr = m ? m[1] : null;
+    if (!versionStr) {
+      // try alternative tokens
+      const tok = firstLine.split(' ')[2];
+      versionStr = tok || null;
+    }
+    if (versionStr) {
+      // handle "1.8.0_281" -> major 8
+      if (versionStr.startsWith('1.')) {
+        const parts = versionStr.split('.');
+        DETECTED_JAVA_RELEASE = parts.length >= 2 ? parts[1] : '8';
+      } else {
+        const parts = versionStr.split('.');
+        DETECTED_JAVA_RELEASE = parts[0];
+      }
+    } else {
+      DETECTED_JAVA_RELEASE = '17'; // fallback
+    }
+  } catch (err) {
+    DETECTED_JAVA_RELEASE = '17'; // fallback if detection fails
+  }
+  return DETECTED_JAVA_RELEASE;
+};
+
+/* Helper to try compiling with flags that ensure compatibility with the runtime.
+   Tries --release <target> first, then -source/-target, then plain javac as a fallback.
 */
-const runJavacWithCompatibility = async (sourcePath, destDir) => {
+const runJavacWithCompatibility = async (sourcePath, destDir, targetRelease) => {
   const candidates = [
-    ['-Xlint:none', '--release', JAVA_RELEASE_TARGET, '-d', destDir, sourcePath],
-    ['-Xlint:none', '-source', JAVA_RELEASE_TARGET, '-target', JAVA_RELEASE_TARGET, '-d', destDir, sourcePath],
+    ['-Xlint:none', '--release', targetRelease, '-d', destDir, sourcePath],
+    ['-Xlint:none', '-source', targetRelease, '-target', targetRelease, '-d', destDir, sourcePath],
     ['-Xlint:none', '-d', destDir, sourcePath]
   ];
   let lastErr = null;
@@ -2474,7 +2511,6 @@ const runJavacWithCompatibility = async (sourcePath, destDir) => {
       const res = await spawnPromise('javac', args, { cwd: path.dirname(sourcePath) });
       if (res.code === 0) return res;
       lastErr = res.stderr || res.stdout || `javac exit ${res.code}`;
-      // If javac returned non-zero try next candidate
     } catch (err) {
       lastErr = (err && err.message) ? err.message : String(err);
     }
@@ -2534,7 +2570,7 @@ const buildAllInputsForTestCases = (testCases) => {
 };
 
 /* ---------- Java runtime wrapper (Main.java) ---------- */
-/* Keep your existing Main.java content (preserved) */
+/* This is your reflective Main runner — unchanged in behavior */
 const mainJavaContent = `
 import java.io.*;
 import java.lang.reflect.*;
@@ -2845,13 +2881,13 @@ const ensureMainCompiled = async () => {
     await ensureDirs();
     const mainJavaPath = path.join(mainSrcDir, 'Main.java');
     await fs.writeFile(mainJavaPath, mainJavaContent, 'utf8');
+    const runtimeTarget = await detectJavaRuntimeRelease();
     try {
-      // compile Main.java with compatibility flags
-      await runJavacWithCompatibility(mainJavaPath, mainBinDir);
+      await runJavacWithCompatibility(mainJavaPath, mainBinDir, runtimeTarget);
     } catch (err) {
       console.error('Retrying Main.java compilation...');
       await new Promise(r => setTimeout(r, 200));
-      await runJavacWithCompatibility(mainJavaPath, mainBinDir);
+      await runJavacWithCompatibility(mainJavaPath, mainBinDir, runtimeTarget);
     }
   })();
   return mainCompiledPromise;
@@ -2871,7 +2907,7 @@ const normalizeJavaSource = (src) => {
   s = s.replace(/public\s+class\s+Solution/g, 'class Solution');
 
   // 4) remove block comments and line comments (simple approach)
-  // NOTE: this is a pragmatic approach and may remove comments inside string literals in rare cases.
+  // NOTE: this is pragmatic and may remove comments inside string literals in rare cases.
   s = s.replace(/\/\*[\s\S]*?\*\//g, '');     // block comments
   s = s.replace(/\/\/[^\n\r]*/g, '');         // line comments
 
@@ -2897,7 +2933,7 @@ const dirHasClassFiles = async (dir) => {
   }
 };
 
-/* remove stale tmp dirs that match pattern hash.tmp-* older than threshold */
+/* remove stale tmp dirs that match pattern key.tmp-* older than threshold */
 const cleanupOldTmpDirs = async (cacheDir, key, ageMs = TMP_CLEANUP_AGE_MS) => {
   try {
     const items = await fs.readdir(cacheDir, { withFileTypes: true });
@@ -2920,9 +2956,11 @@ const cleanupOldTmpDirs = async (cacheDir, key, ageMs = TMP_CLEANUP_AGE_MS) => {
 /* ---------- Robust compileJavaOnce (normalized hashing, lock, .ok marker) ---------- */
 const compileJavaOnce = async (userCode) => {
   await ensureDirs();
+  const runtimeTarget = await detectJavaRuntimeRelease();
 
   const normalized = normalizeJavaSource(userCode);
-  const key = createHash('sha256').update(normalized).digest('hex'); // cache key uses normalized source
+  // include runtime target in cache key so classes compiled for different targets don't collide
+  const key = createHash('sha256').update(normalized + '::release=' + String(runtimeTarget)).digest('hex');
   const execDir = path.join(compilationCacheDir, key);
   const okMarker = path.join(execDir, '.ok');
   const lockPath = execDir + '.lock';
@@ -2932,17 +2970,14 @@ const compileJavaOnce = async (userCode) => {
     const okStat = await fs.stat(okMarker).catch(() => null);
     if (okStat) {
       if (await dirHasClassFiles(execDir)) return execDir;
-      // maybe marker exists but class files absent -> fallthrough to recompile
     } else {
-      // maybe marker missing but some class files exist (older pattern) -> accept that too
       if (await dirHasClassFiles(execDir)) {
-        // create marker for future quick checks
         try { await fs.writeFile(okMarker, `ok\n`); } catch (_) {}
         return execDir;
       }
     }
   } catch (e) {
-    // continue to attempt compile
+    // continue to compile
   }
 
   // ensure cache parent exists
@@ -2953,8 +2988,7 @@ const compileJavaOnce = async (userCode) => {
   const acquireLock = async () => {
     try {
       lockHandle = await fs.open(lockPath, 'wx'); // throws if exists
-      // write some debugging info
-      try { await lockHandle.writeFile(`${process.pid}\n${new Date().toISOString()}\n`); } catch (_) {}
+      try { await lockHandle.writeFile(`${process.pid}\n${new Date().toISOString()}\nrelease:${runtimeTarget}\n`); } catch (_) {}
       return true;
     } catch (err) {
       return false;
@@ -2964,11 +2998,9 @@ const compileJavaOnce = async (userCode) => {
   const waitForCache = async (timeoutMs = DEFAULT_LOCK_WAIT_MS, pollInterval = DEFAULT_POLL_INTERVAL_MS) => {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
-      // if marker appears and class files exist -> return
       try {
         const ok = await fs.stat(okMarker).catch(() => null);
         if (ok && await dirHasClassFiles(execDir)) return execDir;
-        // also accept if class files appear without marker
         if (await dirHasClassFiles(execDir)) return execDir;
       } catch (_) {}
       await new Promise(r => setTimeout(r, pollInterval));
@@ -2976,17 +3008,13 @@ const compileJavaOnce = async (userCode) => {
     throw new Error('Timeout waiting for compilation cache');
   };
 
-  // Try to acquire lock
   const gotLock = await acquireLock();
   if (!gotLock) {
-    // someone else likely compiling; wait for cache
     try {
       return await waitForCache();
     } catch (waitErr) {
-      // try once more to acquire lock (maybe compiler died)
       const reacquired = await acquireLock();
       if (!reacquired) {
-        // final check: if cache exists now, return
         if (await dirHasClassFiles(execDir)) {
           try { await fs.writeFile(okMarker, `ok\n`); } catch (_) {}
           return execDir;
@@ -2996,19 +3024,16 @@ const compileJavaOnce = async (userCode) => {
     }
   }
 
-  // Now we hold the lock. Ensure release in finally.
+  // We hold the lock here
   let tmpDir = null;
   try {
-    // double-check cache before compiling (race)
     if (await dirHasClassFiles(execDir)) {
       try { await fs.writeFile(okMarker, `ok\n`); } catch (_) {}
       return execDir;
     }
 
-    // cleanup old tmp dirs for this key
     await cleanupOldTmpDirs(compilationCacheDir, key);
 
-    // prepare tmp dir
     tmpDir = path.join(compilationCacheDir, `${key}.tmp-${nanoid(6)}`);
     await fs.mkdir(tmpDir, { recursive: true });
 
@@ -3018,34 +3043,25 @@ const compileJavaOnce = async (userCode) => {
     const solPath = path.join(tmpDir, 'Solution.java');
     await fs.writeFile(solPath, code, 'utf8');
 
-    // call javac into tmpDir using compatibility helper
-    const compileResult = await runJavacWithCompatibility(solPath, tmpDir);
-    if (compileResult.code !== 0) {
-      // cleanup tmpDir and rethrow
-      await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
-      tmpDir = null;
-      throw new Error(compileResult.stderr || 'Compilation failed');
-    }
-
-    // success -> try atomic rename tmpDir -> execDir
+    // compile with compatibility flags
+    const compileResult = await runJavacWithCompatibility(solPath, tmpDir, runtimeTarget);
+    // runJavacWithCompatibility throws on fatal failure; if it returned, result.code === 0
+    // success -> atomic rename
     try {
       await fs.rename(tmpDir, execDir);
       tmpDir = null;
-      // create ok marker
-      try { await fs.writeFile(okMarker, `ok\n${new Date().toISOString()}\n`); } catch (_) {}
+      try { await fs.writeFile(okMarker, `ok\n${new Date().toISOString()}\nrelease:${runtimeTarget}\n`); } catch (_) {}
       return execDir;
     } catch (renameErr) {
-      // if execDir already exists, someone beat us -> clean tmp and return existing dir
+      // someone else may have created execDir concurrently
       try {
         const st = await fs.stat(execDir).catch(() => null);
         if (st) {
           await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
           tmpDir = null;
-          // ensure marker exists
-          try { await fs.writeFile(okMarker, `ok\n${new Date().toISOString()}\n`); } catch (_) {}
+          try { await fs.writeFile(okMarker, `ok\n${new Date().toISOString()}\nrelease:${runtimeTarget}\n`); } catch (_) {}
           return execDir;
         } else {
-          // rename failed but execDir doesn't exist -> cleanup and error
           await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
           tmpDir = null;
           throw new Error('Failed to place compiled classes into cache: ' + String(renameErr));
@@ -3057,11 +3073,8 @@ const compileJavaOnce = async (userCode) => {
       }
     }
   } finally {
-    // release lock/cleanup
     try {
-      if (lockHandle) {
-        await lockHandle.close().catch(() => {});
-      }
+      if (lockHandle) { await lockHandle.close().catch(() => {}); }
       await fs.rm(lockPath, { force: true }).catch(() => {});
     } catch (_) {}
     if (tmpDir) {
