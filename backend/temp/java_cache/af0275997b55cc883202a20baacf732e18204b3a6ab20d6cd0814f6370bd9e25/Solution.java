@@ -1,0 +1,10 @@
+import java.util.*; 
+class Solution {
+    public int solve(int[] nums) {
+        // Your logic here
+        int max = 0;
+
+        for(int num : nums) max = Math.max(max , num);
+        return max;
+    }
+}

@@ -1,83 +1,86 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import API from '../api';
 import toast from 'react-hot-toast';
+import { FaClone, FaQuestionCircle, FaClock, FaUser } from 'react-icons/fa';
 
 const Library = () => {
-    const [publicQuestions, setPublicQuestions] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
+    const [contests, setContests] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [cloningId, setCloningId] = useState(null);
+    const navigate = useNavigate();
 
     useEffect(() => {
-        const fetchPublicQuestions = async () => {
-            setIsLoading(true);
+        const fetchContests = async () => {
+            setLoading(true);
             try {
-                const { data } = await API.get('/contest/public-questions');
-                setPublicQuestions(data);
+                const { data } = await API.get('/contest/library');
+                setContests(data);
             } catch (error) {
-                toast.error("Could not load the public question library.");
+                toast.error("Failed to load contest library.");
+                console.error(error);
             } finally {
-                setIsLoading(false);
+                setLoading(false);
             }
         };
-        fetchPublicQuestions();
+        fetchContests();
     }, []);
 
-    const parseDescription = (desc) => {
-        if (!desc) return '';
-        const codeBlocks = [];
-        let processedText = desc.replace(/```([\s\S]*?)```/g, (match, code) => {
-            const escapedCode = code.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            const formattedBlock = `<pre class="bg-gray-900 p-3 rounded-md text-sm font-mono my-4 overflow-x-auto">${escapedCode.trim()}</pre>`;
-            codeBlocks.push(formattedBlock);
-            return `__CODEBLOCK_${codeBlocks.length - 1}__`;
-        });
-        processedText = processedText
-            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-            .replace(/`(.*?)`/g, '<code class="bg-gray-700 text-sm rounded px-1 py-0.5 font-mono">$1</code>');
-        processedText = processedText
-            .split('\n')
-            .map(line => line.trim() === '' ? '<br/>' : line)
-            .join('\n')
-            .replace(/(<br\/>){2,}/g, '<br/>')
-            .replace(/\n/g, '<br/>');
-        processedText = processedText.replace(/__CODEBLOCK_(\d+)__/g, (match, index) => {
-            return codeBlocks[parseInt(index, 10)];
-        });
-        return processedText;
+    const handleCloneContest = async (contestId) => {
+        setCloningId(contestId);
+        const toastId = toast.loading("Cloning contest...");
+        try {
+            const { data } = await API.post(`/contest/clone/${contestId}`);
+            toast.success("Contest cloned successfully! Redirecting to lobby...", { id: toastId });
+            navigate(`/contest/${data.roomId}/lobby`);
+        } catch (error) {
+            toast.error(error.response?.data?.message || "Failed to clone contest.", { id: toastId });
+            setCloningId(null);
+        }
     };
 
-
-    if (isLoading) {
-        return <div className="fixed inset-0 bg-gray-900 flex items-center justify-center text-white"><div className="animate-spin rounded-full h-16 w-16 border-b-2 border-teal-500"></div></div>;
+    if (loading) {
+        return <div className="text-center text-white py-10">Loading contest library...</div>;
     }
 
     return (
-        <div className="max-w-4xl mx-auto">
-            <h1 className="text-4xl font-bold text-center text-teal-400 mb-8">Public Question Library</h1>
-            <div className="space-y-6">
-                {publicQuestions.length > 0 ? publicQuestions.map((q, index) => (
-                    <div key={q._id || index} className="bg-gray-800 p-6 rounded-lg shadow-lg border border-gray-700">
-                        <h2 className="text-2xl font-bold text-white mb-3">{q.title}</h2>
-                        <div
-                            className="text-gray-300/90 leading-relaxed space-y-4"
-                            dangerouslySetInnerHTML={{ __html: parseDescription(q.description) }}
-                        />
-                        {q.testCases && q.testCases[0] && (
-                             <div className="mt-6">
-                                <h3 className="text-base font-semibold text-gray-400 mb-2">Example:</h3>
-                                <div className="bg-gray-900 rounded-md p-3 text-sm font-mono space-y-1">
-                                    <div><span className="text-gray-500">Input: </span>{q.testCases[0].input}</div>
-                                    <div><span className="text-gray-500">Output: </span>{q.testCases[0].output}</div>
+        <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+            <h1 className="text-4xl font-extrabold text-white text-center mb-8">Contest Library</h1>
+            {contests.length === 0 ? (
+                <div className="text-center text-gray-400 bg-gray-800 p-8 rounded-lg">
+                    <h2 className="text-2xl font-bold mb-2">The Library is Empty</h2>
+                    <p>No contests have been completed yet. Once a contest finishes, it will appear here for others to clone and re-host.</p>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {contests.map(contest => (
+                        <div key={contest._id} className="bg-gray-800 rounded-lg p-6 flex flex-col justify-between border border-gray-700 hover:border-indigo-500 transition-all">
+                            <div>
+                                <h2 className="text-xl font-bold text-teal-400 truncate">
+                                    {contest.questions[0]?.title || 'Contest'}
+                                    {contest.questions.length > 1 && ` + ${contest.questions.length - 1} more`}
+                                </h2>
+                                <div className="text-sm text-gray-500 mt-2 mb-4">
+                                    Created on {new Date(contest.createdAt).toLocaleDateString()}
+                                </div>
+                                <div className="space-y-2 text-gray-300">
+                                    <p className="flex items-center gap-2"><FaUser /> Created by: {contest.createdBy?.name || 'Unknown'}</p>
+                                    <p className="flex items-center gap-2"><FaQuestionCircle /> Questions: {contest.questions.length}</p>
+                                    <p className="flex items-center gap-2"><FaClock /> Duration: {contest.duration} minutes</p>
                                 </div>
                             </div>
-                        )}
-                    </div>
-                )) : (
-                    <div className="text-center py-10 bg-gray-800 rounded-lg">
-                        <p className="text-gray-400 text-lg">No public questions available yet.</p>
-                        <p className="text-gray-500">Create a contest to contribute to the library!</p>
-                    </div>
-                )}
-            </div>
+                            <button
+                                onClick={() => handleCloneContest(contest._id)}
+                                disabled={cloningId === contest._id}
+                                className="mt-6 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 px-4 rounded-md flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <FaClone />
+                                {cloningId === contest._id ? 'Cloning...' : 'Clone & Create'}
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
         </div>
     );
 };
